@@ -1,26 +1,75 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+  Senior Music Connection — design tokens.
+  Warm ivory paper, deep wine, aged gold. Serif display type, generous sizes for older eyes.
+*/
+@theme {
+  --color-brand-50: #fbf3f5;
+  --color-brand-100: #f4e3e7;
+  --color-brand-200: #e8c7cf;
+  --color-brand-500: #a04a5e;
+  --color-brand-700: #7a2e3f;
+  --color-brand-800: #5e2230;
+  --color-gold-100: #f6ecd2;
+  --color-gold-300: #e3c77e;
+  --color-gold-500: #c9a24d;
+  --color-gold-700: #a5822f;
+  --color-ivory: #fbf7f0;
+  --color-paper: #fffdf9;
+  --color-ink: #2a1f1d;
+  --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-display), Georgia, "Times New Roman", serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --shadow-warm: 0 1px 2px rgba(60, 30, 20, 0.06), 0 8px 24px -12px rgba(90, 40, 30, 0.18);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: light;
+  font-size: 17px;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: #fbf7f0;
+  background-image:
+    radial-gradient(ellipse 60% 40% at 15% 0%, rgba(201, 162, 77, 0.14), transparent 60%),
+    radial-gradient(ellipse 50% 35% at 100% 100%, rgba(122, 46, 63, 0.08), transparent 60%);
+  background-attachment: fixed;
+  color: #2a1f1d;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+/* Staff lines: a subtle musical texture for hero and section bands */
+.staff-lines {
+  background-image: repeating-linear-gradient(to bottom, rgba(122, 46, 63, 0.08) 0 1px, transparent 1px 14px);
+}
+
+/* Warm card surface */
+.surface {
+  background: #fffdf9;
+  border: 1px solid #eadfcf;
+  box-shadow: var(--shadow-warm);
+}
+
+/* Gold hairline divider with a note in the middle */
+.divider-note {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #a5822f;
+}
+.divider-note::before,
+.divider-note::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(to right, transparent, #c9a24d, transparent);
+}
+
+::selection {
+  background: #e8c7cf;
+  color: #2a1f1d;
 }

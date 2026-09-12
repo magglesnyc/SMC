@@ -1,0 +1,593 @@
+// Senior Music Connection — relational data model.
+// Times are stored in UTC. Facilities and musicians carry an IANA timezone for display.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────── Auth ─────────────────────────
+
+enum UserRole {
+  ADMIN
+  STAFF
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         UserRole @default(STAFF)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  approvedMusicians Musician[]       @relation("MusicianApprovedBy")
+  ownedRequests     EventRequest[]   @relation("RequestOwner")
+  approvedMatches   Match[]          @relation("MatchApprovedBy")
+  matchRuns         MatchRun[]
+  resolvedAlerts    Alert[]
+  configUpdates     MatchingConfig[]
+}
+
+// ───────────────────────── Musician ─────────────────────────
+
+enum MusicianStatus {
+  SUBMITTED
+  REVIEW
+  APPROVED
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum BackgroundCheckStatus {
+  NONE
+  PENDING
+  CLEARED
+  FAILED
+}
+
+enum RateStructure {
+  PER_EVENT
+  PER_HOUR
+}
+
+model Musician {
+  id           String  @id @default(cuid())
+  firstName    String
+  lastName     String
+  stageName    String?
+  email        String
+  phone        String
+  addressLine1 String
+  city         String
+  state        String
+  postalCode   String
+  lat          Float?
+  lng          Float?
+  timezone     String  @default("America/New_York")
+
+  // Services offered
+  entertainmentTypes        String[] // LIVE_ENTERTAINMENT, INTERACTIVE_SESSION, MUSIC_THERAPY, SPECIALTY
+  genres                    String[]
+  instruments               String[]
+  offersInteractive         Boolean  @default(false)
+  therapeuticQualifications String[]
+  audienceExperience        String[] // programming-relevant experience tags, e.g. memory-care, assisted-living
+  facilityTypeExperience    String[]
+
+  // Credentials
+  certifications         String[]
+  insuranceCarrier       String?
+  insurancePolicyNumber  String?
+  insuranceExpiresAt     DateTime?
+  backgroundCheckStatus  BackgroundCheckStatus @default(NONE)
+  backgroundCheckDate    DateTime?
+  programRequirementsMet String[]
+
+  // Rates
+  standardRate      Decimal       @db.Decimal(10, 2)
+  rateStructure     RateStructure @default(PER_EVENT)
+  minBookingMinutes Int           @default(60)
+
+  // Travel
+  maxTravelMiles   Int     @default(30)
+  travelFeeApplies Boolean @default(false)
+
+  // Availability (JSON): weekly windows in musician-local time, and blackout ranges in UTC
+  weeklyAvailability Json @default("[]")
+  blackouts          Json @default("[]")
+
+  // Performance history (denormalised, recomputed by services)
+  completedEvents  Int    @default(0)
+  cancellations    Int    @default(0)
+  noShows          Int    @default(0)
+  avgRating        Float?
+  ratingCount      Int    @default(0)
+  avgResponseHours Float?
+  responseCount    Int    @default(0)
+
+  // Status & admin
+  status            MusicianStatus @default(SUBMITTED)
+  adminRestriction  String?
+  restrictedUntil   DateTime?
+  privateNotes      String?
+  possibleDuplicate Boolean        @default(false)
+  duplicateOfId     String?
+  approvedAt        DateTime?
+  approvedById      String?
+  approvedBy        User?          @relation("MusicianApprovedBy", fields: [approvedById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  matches     Match[]
+  feedback    Feedback[]
+  preferences FacilityMusicianPreference[]
+  alerts      Alert[]
+
+  @@index([email])
+  @@index([status])
+}
+
+// ───────────────────────── Facility ─────────────────────────
+
+enum FacilityStatus {
+  PENDING_REVIEW
+  ACTIVE
+  INACTIVE
+}
+
+model Facility {
+  id           String         @id @default(cuid())
+  name         String
+  facilityType String // independent-living, assisted-living, memory-care, skilled-nursing, adult-day, senior-center
+  addressLine1 String
+  city         String
+  state        String
+  postalCode   String
+  lat          Float?
+  lng          Float?
+  timezone     String         @default("America/New_York")
+  status       FacilityStatus @default(ACTIVE)
+
+  primaryContactName    String
+  primaryContactRole    String?
+  primaryContactEmail   String
+  primaryContactPhone   String?
+  secondaryContactName  String?
+  secondaryContactRole  String?
+  secondaryContactEmail String?
+  secondaryContactPhone String?
+
+  // Audience profile (programming-relevant only; no resident health data)
+  residentPopulation String?
+  typicalGroupSize   Int?
+  audienceTags       String[]
+
+  // Venue notes
+  roomType     String?
+  equipment    String[]
+  hasPower     Boolean @default(true)
+  hasPiano     Boolean @default(false)
+  parkingNotes String?
+  loadInNotes  String?
+
+  // Preferences
+  preferredGenres String[]
+  budgetMin       Decimal? @db.Decimal(10, 2)
+  budgetMax       Decimal? @db.Decimal(10, 2)
+
+  possibleDuplicate Boolean @default(false)
+  privateNotes      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  eventRequests EventRequest[]
+  matches       Match[]
+  feedback      Feedback[]
+  preferences   FacilityMusicianPreference[]
+
+  @@index([name])
+  @@index([primaryContactEmail])
+}
+
+enum PreferenceKind {
+  PREFERRED
+  BLOCKED
+}
+
+model FacilityMusicianPreference {
+  id         String         @id @default(cuid())
+  facilityId String
+  musicianId String
+  kind       PreferenceKind
+  note       String?
+  createdAt  DateTime       @default(now())
+
+  facility Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  musician Musician @relation(fields: [musicianId], references: [id], onDelete: Cascade)
+
+  @@unique([facilityId, musicianId])
+}
+
+// ───────────────────────── Event Request ─────────────────────────
+
+enum EventRequestStatus {
+  SUBMITTED
+  NEEDS_INFORMATION
+  READY_TO_MATCH
+  MATCHING
+  AWAITING_APPROVAL
+  CLOSED
+}
+
+model EventRequest {
+  id             String    @id @default(cuid())
+  reference      String    @unique // human-friendly, e.g. EV-2026-0042
+  facilityId     String?
+  facility       Facility? @relation(fields: [facilityId], references: [id])
+  // Raw intake facility details when the form could not be linked to an existing facility
+  intakeFacility Json?
+
+  startAt            DateTime
+  durationMinutes    Int
+  setupBufferMinutes Int      @default(30)
+  timezone           String   @default("America/New_York")
+
+  serviceType         String // LIVE_ENTERTAINMENT | INTERACTIVE_SESSION | MUSIC_THERAPY | SPECIALTY
+  programTags         String[]
+  audienceDescription String?
+  expectedAttendance  Int?
+  budgetCeiling       Decimal? @db.Decimal(10, 2)
+
+  locationAddressLine1 String?
+  locationCity         String?
+  locationState        String?
+  locationPostalCode   String?
+  lat                  Float?
+  lng                  Float?
+
+  // { therapeuticQualifications: [], certifications: [], backgroundCheckRequired, insuranceRequired, audienceTags: [] }
+  hardRequirements Json    @default("{}")
+  notes            String?
+
+  status        EventRequestStatus @default(SUBMITTED)
+  missingFields String[]
+  ownerId       String?
+  owner         User?              @relation("RequestOwner", fields: [ownerId], references: [id])
+
+  heldAt     DateTime?
+  holdReason String?
+
+  submittedAt   DateTime  @default(now())
+  readyAt       DateTime?
+  recommendedAt DateTime?
+  closedAt      DateTime?
+  closeReason   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  matchRuns MatchRun[]
+  matches   Match[]
+  feedback  Feedback[]
+  alerts    Alert[]
+
+  @@index([status])
+  @@index([startAt])
+  @@index([facilityId])
+}
+
+// ───────────────────────── Matching ─────────────────────────
+
+model MatchRun {
+  id                 String       @id @default(cuid())
+  eventRequestId     String
+  eventRequest       EventRequest @relation(fields: [eventRequestId], references: [id], onDelete: Cascade)
+  triggeredById      String?
+  triggeredBy        User?        @relation(fields: [triggeredById], references: [id])
+  weightsSnapshot    Json
+  thresholdsSnapshot Json
+  relaxations        Json         @default("{}")
+  totalMusicians     Int
+  eligibleCount      Int
+  exclusionSummary   Json
+  durationMs         Int
+  createdAt          DateTime     @default(now())
+
+  matches Match[]
+
+  @@index([eventRequestId])
+}
+
+enum MatchStatus {
+  RECOMMENDED
+  APPROVED
+  OFFERED
+  PARTIALLY_ACCEPTED
+  CONFIRMED
+  COMPLETED
+}
+
+enum ExceptionStatus {
+  DECLINED
+  CHANGE_REQUESTED
+  REMATCH_REQUIRED
+  CANCELLED
+  NO_SHOW
+  CONFLICT
+}
+
+enum PartyResponse {
+  ACCEPTED
+  DECLINED
+  CHANGE_REQUESTED
+}
+
+model Match {
+  id             String       @id @default(cuid())
+  matchRunId     String
+  matchRun       MatchRun     @relation(fields: [matchRunId], references: [id], onDelete: Cascade)
+  eventRequestId String
+  eventRequest   EventRequest @relation(fields: [eventRequestId], references: [id], onDelete: Cascade)
+  facilityId     String
+  facility       Facility     @relation(fields: [facilityId], references: [id])
+  musicianId     String
+  musician       Musician     @relation(fields: [musicianId], references: [id])
+
+  eligible      Boolean
+  failedFilter  String?
+  score         Float?
+  rank          Int?
+  subScores     Json    @default("{}")
+  reasons       Json    @default("[]")
+  warnings      Json    @default("[]")
+  distanceMiles Float?
+  travelMinutes Int?
+
+  selected       Boolean   @default(false)
+  approvedById   String?
+  approvedBy     User?     @relation("MatchApprovedBy", fields: [approvedById], references: [id])
+  approvedAt     DateTime?
+  isOverride     Boolean   @default(false)
+  overrideReason String?
+
+  musicianResponse     PartyResponse?
+  musicianRespondedAt  DateTime?
+  musicianResponseNote String?
+  facilityResponse     PartyResponse?
+  facilityRespondedAt  DateTime?
+  facilityResponseNote String?
+
+  status          MatchStatus      @default(RECOMMENDED)
+  exceptionStatus ExceptionStatus?
+  exceptionReason String?
+
+  offeredAt   DateTime?
+  confirmedAt DateTime?
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tokens        ResponseToken[]
+  feedback      Feedback[]
+  alerts        Alert[]
+  notifications NotificationLog[]
+
+  @@unique([matchRunId, musicianId]) // no duplicate candidates within a run
+  @@index([eventRequestId])
+  @@index([musicianId])
+  @@index([status])
+}
+
+// ───────────────────────── Secure response tokens ─────────────────────────
+
+enum RecipientRole {
+  MUSICIAN
+  FACILITY
+}
+
+enum TokenPurpose {
+  OFFER_RESPONSE
+  FEEDBACK
+}
+
+model ResponseToken {
+  id            String        @id @default(cuid())
+  tokenHash     String        @unique // sha256 of the random token; the raw token exists only in the emailed URL
+  matchId       String
+  match         Match         @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  recipientRole RecipientRole
+  purpose       TokenPurpose
+  expiresAt     DateTime
+  usedAt        DateTime?
+  revokedAt     DateTime?
+  revokedReason String?
+  createdAt     DateTime      @default(now())
+
+  @@index([matchId])
+}
+
+// ───────────────────────── Feedback ─────────────────────────
+
+enum FeedbackKind {
+  CLIENT
+  MUSICIAN
+}
+
+enum FeedbackStatus {
+  SCHEDULED
+  SENT
+  SUBMITTED
+  FOLLOW_UP_REQUIRED
+  CLOSED
+}
+
+model Feedback {
+  id             String       @id @default(cuid())
+  kind           FeedbackKind
+  matchId        String
+  match          Match        @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  eventRequestId String
+  eventRequest   EventRequest @relation(fields: [eventRequestId], references: [id], onDelete: Cascade)
+  facilityId     String
+  facility       Facility     @relation(fields: [facilityId], references: [id])
+  musicianId     String
+  musician       Musician     @relation(fields: [musicianId], references: [id])
+
+  rating           Int?
+  secondaryRatings Json     @default("{}")
+  comments         String?
+  issues           String[]
+  followUpRequired Boolean  @default(false)
+  followUpNotes    String?
+
+  status      FeedbackStatus @default(SCHEDULED)
+  scheduledAt DateTime?
+  sentAt      DateTime?
+  submittedAt DateTime?
+  closedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([matchId, kind])
+}
+
+// ───────────────────────── Notifications, alerts, audit ─────────────────────────
+
+enum NotificationStatus {
+  SENT
+  FAILED
+  SKIPPED
+}
+
+model NotificationLog {
+  id             String             @id @default(cuid())
+  idempotencyKey String             @unique
+  channel        String // email (sms later)
+  recipient      String
+  templateKey    String
+  subject        String
+  status         NotificationStatus
+  providerId     String?
+  error          String?
+  payload        Json?
+  matchId        String?
+  match          Match?             @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  eventRequestId String?
+  createdAt      DateTime           @default(now())
+
+  @@index([eventRequestId])
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+model Alert {
+  id             String        @id @default(cuid())
+  type           String // NO_ELIGIBLE_MUSICIAN, CONFLICTING_RESPONSES, DECLINE, CHANGE_REQUEST, LOW_RATING, AUTOMATION_FAILURE, NEEDS_INFORMATION, UNMATCHED_FACILITY, DUPLICATE, NO_SHOW, CANCELLATION
+  severity       AlertSeverity @default(WARNING)
+  title          String
+  message        String
+  eventRequestId String?
+  eventRequest   EventRequest? @relation(fields: [eventRequestId], references: [id], onDelete: Cascade)
+  matchId        String?
+  match          Match?        @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  musicianId     String?
+  musician       Musician?     @relation(fields: [musicianId], references: [id], onDelete: Cascade)
+  resolvedAt     DateTime?
+  resolvedById   String?
+  resolvedBy     User?         @relation(fields: [resolvedById], references: [id])
+  resolutionNote String?
+  createdAt      DateTime      @default(now())
+
+  @@index([resolvedAt])
+}
+
+enum ActorType {
+  USER
+  SYSTEM
+  MUSICIAN
+  FACILITY
+}
+
+// Append-only. A database trigger (see migrations) rejects UPDATE and DELETE.
+// Deliberately no foreign keys: audit rows must outlive the records they describe.
+model AuditLog {
+  id             String    @id @default(cuid())
+  actorType      ActorType
+  actorId        String?
+  actorLabel     String
+  action         String
+  entityType     String
+  entityId       String
+  eventRequestId String?
+  before         Json?
+  after          Json?
+  createdAt      DateTime  @default(now())
+
+  @@index([entityType, entityId])
+  @@index([eventRequestId])
+  @@index([createdAt])
+}
+
+// ───────────────────────── Configuration ─────────────────────────
+
+model MatchingConfig {
+  id          String   @id @default("default")
+  weights     Json
+  thresholds  Json
+  updatedAt   DateTime @updatedAt
+  updatedById String?
+  updatedBy   User?    @relation(fields: [updatedById], references: [id])
+}
+
+model NotificationTemplate {
+  key       String   @id
+  subject   String
+  intro     String
+  updatedAt DateTime @updatedAt
+}
+
+// Public-form idempotency: a client-generated submission id maps to the created record.
+model FormSubmission {
+  submissionId String   @id
+  formType     String
+  entityId     String
+  createdAt    DateTime @default(now())
+}
+
+// ───────────────────────── Personal calendar links ─────────────────────────
+
+enum CalendarOwnerType {
+  MUSICIAN
+  FACILITY
+}
+
+// A long-lived, revocable per-person secret URL segment that unlocks a read-only calendar page and an
+// iCal feed (the "private calendar address" pattern). Stored as-is so every email can carry the same link;
+// rotate it from the admin console if it is ever shared.
+model CalendarToken {
+  id         String            @id @default(cuid())
+  token      String            @unique
+  ownerType  CalendarOwnerType
+  ownerId    String
+  createdAt  DateTime          @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+
+  @@index([ownerType, ownerId])
+}
