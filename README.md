@@ -74,6 +74,25 @@ The platform is region-agnostic. Every timestamp is stored in UTC; each facility
 
 See `.env.example`. `DATABASE_URL`, `AUTH_SECRET`, `APP_BASE_URL` are required. `RESEND_API_KEY`/`EMAIL_FROM` enable real email; `GOOGLE_MAPS_API_KEY` enables real geocoding and drive times; `INNGEST_*` for hosted Inngest; `JOBS_SECRET` protects the external cron endpoint `POST /api/jobs/run`.
 
+## Deploying a public demo (Railway)
+
+`railway.json` is checked in, so the only setup is in the Railway dashboard:
+
+1. **New Project → Deploy from GitHub repo** → pick `magglesnyc/SMC` (branch `main`).
+2. In the same project, **+ New → Database → PostgreSQL**.
+3. Open the web service → **Variables** and add:
+
+   | Variable | Value |
+   | --- | --- |
+   | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (reference to the database service) |
+   | `AUTH_SECRET` | output of `openssl rand -base64 32` |
+   | `APP_BASE_URL` | `https://${{RAILWAY_PUBLIC_DOMAIN}}` |
+   | `DEMO_MODE` | `true` |
+
+4. Web service → **Settings → Networking → Generate Domain**. Railway redeploys; the pre-deploy step runs the migrations and, because `DEMO_MODE=true` and the database is empty, the first boot runs the demo seed. Open `https://<domain>/demo`.
+
+Emails stay in **Admin → Email log** unless `RESEND_API_KEY` is set. Scheduled jobs run inline on demand without Inngest. To reset the demo data, delete the rows (or the Postgres service) and redeploy.
+
 ## Deploying (Vercel + Neon/Supabase)
 
 1. Create the database, set `DATABASE_URL`, run `npm run db:deploy`.

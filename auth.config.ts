@@ -2,6 +2,7 @@ import type { NextAuthConfig } from "next-auth";
 
 /** Shared, dependency-free Auth.js config (no Prisma) so it can be used by the proxy. */
 export const authConfig = {
+  trustHost: true,
   pages: { signIn: "/login" },
   session: { strategy: "jwt", maxAge: 12 * 60 * 60 },
   callbacks: {
