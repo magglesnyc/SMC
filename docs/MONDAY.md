@@ -144,8 +144,17 @@ completed after the event so musician stats and history stay right.
 
 The old "Senior Music Connection" workspace (Gig Tracker 5834314429, old application and agreement boards) is not
 synced. `npm run monday:export-legacy` writes a complete JSON + CSV export under `exports/monday-legacy/<date>/`
-(git-ignored: it contains contact details). Importing that history into the app and archiving the boards in Monday
-is a separate step; archive, never delete.
+(git-ignored: it contains contact details). `npm run monday:import-legacy [-- --dry-run]` then brings that history
+into the app:
+
+- old Gig Tracker rows → completed events (`source = "LEGACY"`) linked to the current musician (by entertainer email,
+  then name, stage name or acronym) and facility (by contact email, name, word containment, or a unique organisation
+  email domain); rows in the "Moved to revised Gig Tracker" group are skipped because the live sync already has them;
+- old applications → a dated note on the matching musician; old service agreements → a note on the matching event;
+- anything that cannot be matched confidently is listed in `import-report.md` next to the export for a person to
+  resolve. Nothing is guessed. Re-running is safe: every imported row is linked to its legacy item.
+
+Once the report has been reviewed, archive the old boards in Monday (never delete).
 
 ## Known data gaps surfaced by the first pull
 

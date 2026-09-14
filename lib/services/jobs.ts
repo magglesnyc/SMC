@@ -32,8 +32,8 @@ const MONDAY_RECONCILE_MS = 60 * 60_000;
 const REMINDER_OFFSETS_HOURS = [72, 24];
 
 /**
- * Events mirrored from Monday are emailed from Monday by staff during the transition: the app never sends
- * reminders, offer nudges or feedback forms for them (it still marks them completed).
+ * Events mirrored from Monday (or imported from the retired workspace) are emailed from Monday by staff during the
+ * transition: the app never sends reminders, offer nudges or feedback forms for them (it still marks them completed).
  */
 const APP_OWNED = { source: "APP" } as const;
 

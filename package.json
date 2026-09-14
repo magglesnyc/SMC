@@ -25,6 +25,7 @@
     "monday:push": "tsx scripts/monday-push.ts",
     "monday:webhooks": "tsx scripts/monday-webhooks.ts",
     "monday:export-legacy": "tsx scripts/monday-export-legacy.ts",
+    "monday:import-legacy": "tsx scripts/monday-import-legacy.ts",
     "inngest:dev": "npx inngest-cli@latest dev -u http://localhost:3000/api/inngest",
     "postinstall": "prisma generate",
     "start:railway": "tsx scripts/seed-if-empty.ts && next start"
