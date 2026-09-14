@@ -24,6 +24,12 @@ export interface JobReport {
 
 const REMINDER_OFFSETS_HOURS = [72, 24];
 
+/**
+ * Events mirrored from Monday are emailed from Monday by staff during the transition: the app never sends
+ * reminders, offer nudges or feedback forms for them (it still marks them completed).
+ */
+const APP_OWNED = { source: "APP" } as const;
+
 export async function runDueJobs(now = new Date()): Promise<JobReport> {
   const report: JobReport = { ranAt: now.toISOString(), reminders: 0, completed: 0, feedbackSent: 0, offerNudges: 0, expiredOffers: 0, errors: [] };
   const safe = async (label: string, fn: () => Promise<void>, refs: { matchId?: string; eventRequestId?: string } = {}) => {
@@ -38,7 +44,7 @@ export async function runDueJobs(now = new Date()): Promise<JobReport> {
   // 1. Pre-event reminders for confirmed bookings (72h and 24h before start).
   const horizon = new Date(now.getTime() + Math.max(...REMINDER_OFFSETS_HOURS) * 3_600_000);
   const upcoming = await prisma.match.findMany({
-    where: { status: "CONFIRMED", exceptionStatus: null, eventRequest: { startAt: { gt: now, lte: horizon } } },
+    where: { status: "CONFIRMED", exceptionStatus: null, eventRequest: { ...APP_OWNED, startAt: { gt: now, lte: horizon } } },
     include: { eventRequest: { include: { facility: true } }, musician: true, facility: true },
   });
   for (const m of upcoming) {
@@ -72,7 +78,7 @@ export async function runDueJobs(now = new Date()): Promise<JobReport> {
   }
 
   // 3. Send feedback forms that are due.
-  const due = await prisma.feedback.findMany({ where: { status: "SCHEDULED", scheduledAt: { lte: now }, match: { status: "COMPLETED" } }, distinct: ["matchId"], select: { matchId: true } });
+  const due = await prisma.feedback.findMany({ where: { status: "SCHEDULED", scheduledAt: { lte: now }, match: { status: "COMPLETED" }, eventRequest: APP_OWNED }, distinct: ["matchId"], select: { matchId: true } });
   for (const f of due) {
     await safe(`Feedback send for match ${f.matchId}`, async () => {
       await sendFeedbackRequests(f.matchId);
@@ -81,7 +87,7 @@ export async function runDueJobs(now = new Date()): Promise<JobReport> {
   }
 
   // 4. Nudge staff about offers with no response after 24h; flag expired offers.
-  const stale = await prisma.match.findMany({ where: { status: { in: ["OFFERED", "PARTIALLY_ACCEPTED"] }, exceptionStatus: null, offeredAt: { lt: new Date(now.getTime() - 24 * 3_600_000) } }, include: { eventRequest: true, tokens: { where: { purpose: "OFFER_RESPONSE", usedAt: null, revokedAt: null } } } });
+  const stale = await prisma.match.findMany({ where: { status: { in: ["OFFERED", "PARTIALLY_ACCEPTED"] }, exceptionStatus: null, offeredAt: { lt: new Date(now.getTime() - 24 * 3_600_000) }, eventRequest: APP_OWNED }, include: { eventRequest: true, tokens: { where: { purpose: "OFFER_RESPONSE", usedAt: null, revokedAt: null } } } });
   for (const m of stale) {
     const pending = [m.musicianResponse ? null : "musician", m.facilityResponse ? null : "facility"].filter(Boolean) as string[];
     const allExpired = m.tokens.length > 0 && m.tokens.every((t) => t.expiresAt < now);

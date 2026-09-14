@@ -42,3 +42,6 @@ next-env.d.ts
 
 # prisma generated client
 /generated
+
+# Monday.com data exports (contain client and musician contact details)
+/exports

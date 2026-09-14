@@ -120,6 +120,22 @@ model Musician {
   avgResponseHours Float?
   responseCount    Int    @default(0)
 
+  // Profile details tracked on the Monday Partner Entertainer List. Free-text where Monday is free-text;
+  // the structured equivalents above (standardRate, maxTravelMiles, genres) are parsed from these on import.
+  preferredContact      String? // text | email | phone
+  region                String?
+  birthdayMonth         String?
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  groupSize             Int?
+  equipmentNotes        String?
+  bio                   String?
+  themes                String[] // themed programs offered, e.g. "Patriotic", "December Holiday Music"
+  rateNotes             String? // raw "expected pay per gig" text
+  travelNotes           String? // raw "how far are you willing to drive" text
+  genreNotes            String? // raw genre description
+  mediaUrls             String[] // headshot / promo file URLs
+
   // Status & admin
   status            MusicianStatus @default(SUBMITTED)
   adminRestriction  String?
@@ -192,6 +208,8 @@ model Facility {
   budgetMin       Decimal? @db.Decimal(10, 2)
   budgetMax       Decimal? @db.Decimal(10, 2)
 
+  facilityPhone     String?
+  audienceSizeNotes String? // raw "typical audience size" text from Monday
   possibleDuplicate Boolean @default(false)
   privateNotes      String?
 
@@ -267,6 +285,25 @@ model EventRequest {
   // { therapeuticQualifications: [], certifications: [], backgroundCheckRequired, insuranceRequired, audienceTags: [] }
   hardRequirements Json    @default("{}")
   notes            String?
+
+  // Where the record originated. MONDAY records are managed by staff in Monday during the transition:
+  // the app mirrors them but does not send its own offer/feedback emails for them.
+  source String @default("APP") // APP | MONDAY
+
+  // Booking details tracked on the Monday Gig Tracker. Agreements, billing and payment stay in Monday;
+  // these are mirrored read-only so staff can see them in the app.
+  timeText            String? // raw "Time of Performance" text as entered, e.g. "2 PM - 3 PM"
+  occasion            String?
+  performanceLocation String?
+  requestedEntertainer String?
+  earlyArrivalNotes   String?
+  arrivalInstructions String?
+  entertainerFee      Decimal? @db.Decimal(10, 2)
+  amountCharged       Decimal? @db.Decimal(10, 2)
+  facilityBilled      String? // Yes | No | Late
+  entertainerPaid     String? // Yes | No
+  agreementStatus     String?
+  cancelledBy         String? // Entertainer | Client
 
   status        EventRequestStatus @default(SUBMITTED)
   missingFields String[]
@@ -459,6 +496,8 @@ model Feedback {
   issues           String[]
   followUpRequired Boolean  @default(false)
   followUpNotes    String?
+  wouldRecommend   String? // Yes | No | Maybe (facility feedback)
+  testimonialOk    Boolean  @default(false) // permission to quote publicly
 
   status      FeedbackStatus @default(SCHEDULED)
   scheduledAt DateTime?
@@ -599,4 +638,71 @@ model CalendarToken {
   revokedAt  DateTime?
 
   @@index([ownerType, ownerId])
+}
+
+// ───────────────────────── Monday.com sync ─────────────────────────
+
+// One row per (Monday item ↔ app record). A record can be linked to more than one item (an event is
+// both a Booking Request Form row and a Gig Tracker row) and a request-form item can back several
+// events (one per date), so the pair is unique, not either side alone.
+model MondayLink {
+  id              String    @id @default(cuid())
+  boardId         String
+  itemId          String
+  entityType      String // Musician | Facility | EventRequest | Feedback
+  entityId        String
+  mondayUpdatedAt DateTime? // item.updated_at as of the last pull; unchanged ⇒ pull is a no-op
+  pulledAt        DateTime?
+  pushedAt        DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([itemId, entityType, entityId])
+  @@index([boardId, itemId])
+  @@index([entityType, entityId])
+}
+
+enum MondaySyncDirection {
+  PULL
+  PUSH
+  WEBHOOK
+}
+
+// Append-only trail of what the sync did, for the admin sync page and for debugging drift.
+model MondaySyncLog {
+  id         String              @id @default(cuid())
+  direction  MondaySyncDirection
+  boardId    String
+  itemId     String?
+  entityType String?
+  entityId   String?
+  action     String // created | updated | linked | skipped | error
+  detail     Json?
+  error      String?
+  createdAt  DateTime            @default(now())
+
+  @@index([itemId])
+  @@index([createdAt])
+}
+
+// Loop prevention. Every value the app writes to Monday is recorded here; when the matching webhook
+// comes back the change is recognised as our own echo and ignored. Keyed on value, not on user, so the
+// sync can run under any Monday account (see docs/MONDAY.md).
+model MondayEcho {
+  id        String   @id @default(cuid())
+  itemId    String
+  columnId  String
+  valueHash String
+  createdAt DateTime @default(now())
+
+  @@index([itemId, columnId])
+  @@index([createdAt])
+}
+
+// Per-board watermark for full/incremental pulls.
+model MondaySyncCursor {
+  boardId      String    @id
+  lastPulledAt DateTime?
+  lastError    String?
+  updatedAt    DateTime  @updatedAt
 }

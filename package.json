@@ -21,6 +21,8 @@
     "uat:portal": "tsx scripts/portal-smoke.ts",
     "dev:links": "tsx scripts/dev-links.ts",
     "jobs:run": "tsx scripts/run-jobs.ts",
+    "monday:pull": "tsx scripts/monday-pull.ts",
+    "monday:export-legacy": "tsx scripts/monday-export-legacy.ts",
     "inngest:dev": "npx inngest-cli@latest dev -u http://localhost:3000/api/inngest",
     "postinstall": "prisma generate",
     "start:railway": "tsx scripts/seed-if-empty.ts && next start"
