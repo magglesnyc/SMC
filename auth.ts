@@ -22,7 +22,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (!user || !user.active) return null;
         const ok = await compare(parsed.data.password, user.passwordHash);
         if (!ok) return null;
-        return { id: user.id, email: user.email, name: user.name, role: user.role };
+        return { id: user.id, email: user.email, name: user.name, role: user.role, musicianId: user.musicianId, facilityId: user.facilityId };
       },
     }),
   ],

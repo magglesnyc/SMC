@@ -6,6 +6,7 @@ import { ReminderEmail, StaffNotifyEmail } from "@/lib/emails/templates";
 import { eventSummary } from "./eventRequests";
 import { loadMatch, markCompleted } from "./bookings";
 import { sendFeedbackRequests } from "./feedback";
+import { calendarUrlFor } from "@/lib/calendar";
 
 /**
  * Date/status-driven automation (FR-12). Idempotent: every send has a stable idempotency
@@ -48,8 +49,9 @@ export async function runDueJobs(now = new Date()): Promise<JobReport> {
       await safe(`Reminder ${offset}h for ${m.eventRequest.reference}`, async () => {
         const tm = await templateText("reminder.musician", { subject: "Reminder: upcoming performance", intro: `Hi ${m.musician.firstName}, a reminder about your upcoming performance.` });
         const tf = await templateText("reminder.facility", { subject: "Reminder: upcoming musician visit", intro: `A reminder that ${e.musicianName} is scheduled to perform at your community.` });
-        const a = await dispatch({ to: m.musician.email, templateKey: "reminder.musician", subject: `${tm.subject} — ${e.when}`, body: ReminderEmail({ e, intro: tm.intro, audience: "musician", loadIn: m.facility.loadInNotes }), idempotencyKey: `reminder:${m.id}:MUSICIAN:${offset}`, matchId: m.id, eventRequestId: m.eventRequestId });
-        const b = await dispatch({ to: m.facility.primaryContactEmail, templateKey: "reminder.facility", subject: `${tf.subject} — ${e.when}`, body: ReminderEmail({ e, intro: tf.intro, audience: "facility" }), idempotencyKey: `reminder:${m.id}:FACILITY:${offset}`, matchId: m.id, eventRequestId: m.eventRequestId });
+        const [mCal, fCal] = await Promise.all([calendarUrlFor("MUSICIAN", m.musicianId), calendarUrlFor("FACILITY", m.facilityId)]);
+        const a = await dispatch({ to: m.musician.email, templateKey: "reminder.musician", subject: `${tm.subject} — ${e.when}`, body: ReminderEmail({ e, intro: tm.intro, audience: "musician", loadIn: m.facility.loadInNotes, calendarUrl: mCal }), idempotencyKey: `reminder:${m.id}:MUSICIAN:${offset}`, matchId: m.id, eventRequestId: m.eventRequestId });
+        const b = await dispatch({ to: m.facility.primaryContactEmail, templateKey: "reminder.facility", subject: `${tf.subject} — ${e.when}`, body: ReminderEmail({ e, intro: tf.intro, audience: "facility", calendarUrl: fCal }), idempotencyKey: `reminder:${m.id}:FACILITY:${offset}`, matchId: m.id, eventRequestId: m.eventRequestId });
         if (a.status === "SENT" || b.status === "SENT") {
           report.reminders++;
           await audit(SYSTEM_ACTOR, { action: "reminder.sent", entityType: "Match", entityId: m.id, eventRequestId: m.eventRequestId, after: { offsetHours: offset } });

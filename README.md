@@ -32,7 +32,14 @@ With `DEMO_MODE=true`, open **http://localhost:3000/demo** for one-click sign-in
 | Scheduler | scheduler@smc.test | demo-scheduler |
 | Staff | staff@smc.test | demo-staff |
 
-Musicians and community contacts have no login (by design); their experience is the emails and secure links shown on the demo hub.
+Community contacts and roster musicians can also sign in to their own portals (the emailed secure links keep working for anyone who never signs in):
+
+| Portal | Email | Password | Landing |
+| --- | --- | --- | --- |
+| Community (assisted living) | director@community.test | demo-community | `/portal/facility` — booked performers, offers to confirm, rate performances, browse and request performers, preferred list, calendar + iCal |
+| Musician | performer@community.test | demo-musician | `/portal/musician` — offers to accept, every venue with address and load-in notes, calendar + iCal, rate venues, ratings received |
+
+Portal users are `User` rows with role `FACILITY` or `MUSICIAN` bound to one `facilityId` / `musicianId`. The seed binds the demo logins to a busy seeded community and musician. Ratings are two-way: communities rate performances (`Feedback.kind = CLIENT`) and musicians rate venues (`Feedback.kind = MUSICIAN`), from either the emailed link or the portal; low ratings and flagged issues raise an alert for staff.
 
 Public forms: `/request` (facility event request), `/apply` (musician application). Feedback forms and offer responses are reached only through emailed links; without `RESEND_API_KEY` the emails (with their links) appear in **Admin → Email log**.
 
@@ -66,6 +73,10 @@ prisma/              Schema, migrations (incl. append-only audit trigger), reali
 tests/               Engine unit tests.  scripts/  backtest + jobs runner.  docs/ADMIN.md  administrator guide.
 ```
 
+## Calendars
+
+Musicians and communities have no login, so each gets a **private calendar link** (like a private Google Calendar address) at `/calendar/<token>` with day, week, month, year and list views in their own time zone, and an iCal feed at `/calendar/<token>/feed.ics` for Google, Apple or Outlook. The link is included in confirmation and reminder emails and can be copied or rotated from the musician or facility page in the console. Staff use **Admin → Calendar**, filterable by musician or community and switchable between US time zones.
+
 ## National operation
 
 The platform is region-agnostic. Every timestamp is stored in UTC; each facility, musician and event carries its own IANA time zone, chosen on the public forms (defaulted from the state) and used for all display, availability checks and emails. Matching is distance-based, so rosters in different metros never interact. Set `NEXT_PUBLIC_DEFAULT_TIMEZONE` for staff-facing timestamps that have no facility context, and `GOOGLE_MAPS_API_KEY` so travel times reflect real roads in every region.
@@ -73,25 +84,6 @@ The platform is region-agnostic. Every timestamp is stored in UTC; each facility
 ## Environment variables
 
 See `.env.example`. `DATABASE_URL`, `AUTH_SECRET`, `APP_BASE_URL` are required. `RESEND_API_KEY`/`EMAIL_FROM` enable real email; `GOOGLE_MAPS_API_KEY` enables real geocoding and drive times; `INNGEST_*` for hosted Inngest; `JOBS_SECRET` protects the external cron endpoint `POST /api/jobs/run`.
-
-## Deploying a public demo (Railway)
-
-`railway.json` is checked in, so the only setup is in the Railway dashboard:
-
-1. **New Project → Deploy from GitHub repo** → pick `magglesnyc/SMC` (branch `main`).
-2. In the same project, **+ New → Database → PostgreSQL**.
-3. Open the web service → **Variables** and add:
-
-   | Variable | Value |
-   | --- | --- |
-   | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (reference to the database service) |
-   | `AUTH_SECRET` | output of `openssl rand -base64 32` |
-   | `APP_BASE_URL` | `https://${{RAILWAY_PUBLIC_DOMAIN}}` |
-   | `DEMO_MODE` | `true` |
-
-4. Web service → **Settings → Networking → Generate Domain**. Railway redeploys; the pre-deploy step runs the migrations and, because `DEMO_MODE=true` and the database is empty, the first boot runs the demo seed. Open `https://<domain>/demo`.
-
-Emails stay in **Admin → Email log** unless `RESEND_API_KEY` is set. Scheduled jobs run inline on demand without Inngest. To reset the demo data, delete the rows (or the Postgres service) and redeploy.
 
 ## Deploying (Vercel + Neon/Supabase)
 

@@ -1,14 +1,17 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
+import { landingFor, type AppRole } from "@/auth.config";
 import type { Actor } from "@/lib/audit";
 
-export type Role = "ADMIN" | "STAFF";
+export type Role = AppRole;
 
 export interface CurrentUser {
   id: string;
   email: string;
   name: string;
   role: Role;
+  musicianId: string | null;
+  facilityId: string | null;
 }
 
 export async function currentUser(): Promise<CurrentUser | null> {
@@ -17,15 +20,20 @@ export async function currentUser(): Promise<CurrentUser | null> {
   return {
     id: session.user.id,
     email: session.user.email ?? "",
-    name: session.user.name ?? session.user.email ?? "staff",
+    name: session.user.name ?? session.user.email ?? "user",
     role: session.user.role ?? "STAFF",
+    musicianId: session.user.musicianId ?? null,
+    facilityId: session.user.facilityId ?? null,
   };
 }
 
-/** Server components / actions: require any signed-in staff user. */
+export const isStaff = (u: CurrentUser) => u.role === "ADMIN" || u.role === "STAFF";
+
+/** Server components / actions: require any signed-in staff user (console access). */
 export async function requireUser(): Promise<CurrentUser> {
   const u = await currentUser();
   if (!u) redirect("/login");
+  if (!isStaff(u)) redirect(landingFor(u.role));
   return u;
 }
 
@@ -36,7 +44,25 @@ export async function requireAdmin(): Promise<CurrentUser> {
   return u;
 }
 
+/** Portal: require a login bound to a musician record. Returns the musician id. */
+export async function requireMusicianUser(): Promise<CurrentUser & { musicianId: string }> {
+  const u = await currentUser();
+  if (!u) redirect("/login?callbackUrl=%2Fportal%2Fmusician");
+  if (u.role !== "MUSICIAN" || !u.musicianId) redirect(landingFor(u.role));
+  return { ...u, musicianId: u.musicianId };
+}
+
+/** Portal: require a login bound to a facility (community) record. Returns the facility id. */
+export async function requireFacilityUser(): Promise<CurrentUser & { facilityId: string }> {
+  const u = await currentUser();
+  if (!u) redirect("/login?callbackUrl=%2Fportal%2Ffacility");
+  if (u.role !== "FACILITY" || !u.facilityId) redirect(landingFor(u.role));
+  return { ...u, facilityId: u.facilityId };
+}
+
 export function actorOf(u: CurrentUser): Actor {
+  if (u.role === "MUSICIAN") return { type: "MUSICIAN", id: u.musicianId ?? u.id, label: `${u.name} (musician portal)` };
+  if (u.role === "FACILITY") return { type: "FACILITY", id: u.facilityId ?? u.id, label: `${u.name} (community portal)` };
   return { type: "USER", id: u.id, label: `${u.name} (${u.role.toLowerCase()})` };
 }
 

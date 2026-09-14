@@ -12,12 +12,14 @@ import { Button } from "@/components/ui";
 import { CheckboxGroup, ErrorText, L, Section, StateOptions, TimezoneOptions, inputClass, selectClass, textareaClass, useStateTimezone, useSubmissionId, useSubmit } from "./shared";
 import { titleCase } from "@/lib/utils";
 
-export function EventRequestForm({ facilities }: { facilities: { id: string; name: string; city: string }[] }) {
+export function EventRequestForm({ facilities, defaultFacilityId, defaultNotes }: { facilities: { id: string; name: string; city: string }[]; defaultFacilityId?: string; defaultNotes?: string }) {
   const submissionId = useSubmissionId();
   const form = useForm<FormValues, unknown, EventRequestInput>({
     resolver: zodResolver(eventRequestSchema),
     defaultValues: {
       submissionId,
+      facilityId: defaultFacilityId && facilities.some((f) => f.id === defaultFacilityId) ? defaultFacilityId : undefined,
+      notes: defaultNotes,
       state: "",
       facilityType: "assisted-living",
       durationMinutes: 60,

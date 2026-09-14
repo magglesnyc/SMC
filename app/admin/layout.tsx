@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 const nav = [
   { href: "/admin", label: "Dashboard" },
   { href: "/admin/requests", label: "Pipeline" },
+  { href: "/admin/calendar", label: "Calendar" },
   { href: "/admin/bookings", label: "Upcoming events" },
   { href: "/admin/musicians", label: "Musicians" },
   { href: "/admin/facilities", label: "Facilities" },

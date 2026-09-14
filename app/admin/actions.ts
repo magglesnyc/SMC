@@ -13,6 +13,7 @@ import { setMusicianRestriction, setMusicianStatus, updateMusicianCoordinates } 
 import { createFacilityFromIntake, setFacilityPreference, updateFacility } from "@/lib/services/facilities";
 import { closeFeedback } from "@/lib/services/feedback";
 import { runDueJobs } from "@/lib/services/jobs";
+import { rotateCalendarToken } from "@/lib/calendar";
 import { coerceThresholds, validateWeights, type Weights } from "@/lib/matching";
 import type { MusicianStatus } from "@/generated/prisma/enums";
 
@@ -356,6 +357,18 @@ export async function runJobsAction(_p: ActionResult, _fd: FormData) {
     return `Ran jobs: ${r.reminders} reminders, ${r.completed} completed, ${r.feedbackSent} feedback sends, ${r.offerNudges} nudges, ${r.expiredOffers} expired offers${r.errors.length ? `, ${r.errors.length} errors` : ""}.`;
   });
   refresh("/admin/bookings", "/admin/feedback", "/admin/alerts");
+  return res;
+}
+
+export async function rotateCalendarLinkAction(_p: ActionResult, fd: FormData) {
+  const ownerType = str(fd, "ownerType") as "MUSICIAN" | "FACILITY";
+  const ownerId = str(fd, "ownerId");
+  const res = await guard(async (u) => {
+    const url = await rotateCalendarToken(ownerType, ownerId);
+    await audit(actorOf(u), { action: "calendar.rotated", entityType: ownerType === "MUSICIAN" ? "Musician" : "Facility", entityId: ownerId });
+    return `New link issued: ${url}`;
+  });
+  refresh(ownerType === "MUSICIAN" ? `/admin/musicians/${ownerId}` : `/admin/facilities/${ownerId}`);
   return res;
 }
 

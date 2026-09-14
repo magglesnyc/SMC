@@ -4,7 +4,8 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/rbac";
 import { Card, CardBody, CardHeader, DL, PageHeader, StatusBadge, Table, TD, TH, THead, TR } from "@/components/ui";
 import { ActionForm } from "@/components/admin/ActionForm";
-import { facilityPreferenceAction, updateFacilityAction } from "../../actions";
+import { facilityPreferenceAction, rotateCalendarLinkAction, updateFacilityAction } from "../../actions";
+import { calendarUrlFor } from "@/lib/calendar";
 import { fmtDateTime, fmtMoney, decimalToNumber, titleCase } from "@/lib/utils";
 
 export default async function FacilityDetailPage(props: PageProps<"/admin/facilities/[id]">) {
@@ -20,6 +21,7 @@ export default async function FacilityDetailPage(props: PageProps<"/admin/facili
   });
   if (!f) notFound();
   const musicians = await prisma.musician.findMany({ where: { status: { in: ["ACTIVE", "APPROVED"] } }, select: { id: true, firstName: true, lastName: true, stageName: true }, orderBy: { lastName: "asc" } });
+  const calendarUrl = await calendarUrlFor("FACILITY", f.id);
 
   return (
     <div>
@@ -67,6 +69,14 @@ export default async function FacilityDetailPage(props: PageProps<"/admin/facili
         </div>
 
         <div className="space-y-6">
+          <Card>
+            <CardHeader title="Community calendar" description="Private link the activity director receives in confirmations and reminders: every performer scheduled here, by day / week / month / year, plus an iCal feed." />
+            <CardBody className="space-y-2 text-sm">
+              <a href={calendarUrl} target="_blank" rel="noreferrer" className="block break-all text-brand-700 underline">{calendarUrl}</a>
+              <Link href={`/admin/calendar?facility=${f.id}`} className="block text-brand-700 underline">View in staff calendar</Link>
+              <ActionForm action={rotateCalendarLinkAction} hidden={{ ownerType: "FACILITY", ownerId: f.id }} submitLabel="Rotate link" variant="outline" confirm="Issue a new calendar link? The old one stops working immediately." inline />
+            </CardBody>
+          </Card>
           <Card>
             <CardHeader title="Preferred / blocked musicians" description="Preferred boosts rotation score; blocked excludes." />
             <CardBody className="space-y-3">

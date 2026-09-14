@@ -4,7 +4,8 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/rbac";
 import { Card, CardBody, CardHeader, DL, PageHeader, StatusBadge, Badge, Table, TD, TH, THead, TR } from "@/components/ui";
 import { ActionForm } from "@/components/admin/ActionForm";
-import { musicianCoordsAction, musicianNotesAction, musicianRestrictionAction, musicianStatusAction } from "../../actions";
+import { musicianCoordsAction, musicianNotesAction, musicianRestrictionAction, musicianStatusAction, rotateCalendarLinkAction } from "../../actions";
+import { calendarUrlFor } from "@/lib/calendar";
 import { fmtDate, fmtDateTime, fmtMoney, decimalToNumber, titleCase } from "@/lib/utils";
 import { WEEKDAYS } from "@/lib/validation/constants";
 import type { MusicianStatus } from "@/generated/prisma/enums";
@@ -33,6 +34,7 @@ export default async function MusicianDetailPage(props: PageProps<"/admin/musici
   });
   if (!m) notFound();
   const dup = m.duplicateOfId ? await prisma.musician.findUnique({ where: { id: m.duplicateOfId }, select: { id: true, firstName: true, lastName: true, email: true } }) : null;
+  const calendarUrl = await calendarUrlFor("MUSICIAN", m.id);
   const windows = (m.weeklyAvailability as unknown as WeeklyWindow[]) ?? [];
   const blackouts = (m.blackouts as unknown as Blackout[]) ?? [];
 
@@ -131,6 +133,15 @@ export default async function MusicianDetailPage(props: PageProps<"/admin/musici
               <CardBody><ul className="space-y-1 text-sm">{m.preferences.map((p) => <li key={p.id}><StatusBadge status={p.kind} /> <Link href={`/admin/facilities/${p.facilityId}`} className="hover:underline">{p.facility.name}</Link>{p.note ? <span className="text-xs text-stone-500"> — {p.note}</span> : null}</li>)}</ul></CardBody>
             </Card>
           ) : null}
+
+          <Card>
+            <CardHeader title="Personal calendar" description="Private link the musician receives in confirmations and reminders. Day / week / month / year plus an iCal feed." />
+            <CardBody className="space-y-2 text-sm">
+              <a href={calendarUrl} target="_blank" rel="noreferrer" className="block break-all text-brand-700 underline">{calendarUrl}</a>
+              <Link href={`/admin/calendar?musician=${m.id}`} className="block text-brand-700 underline">View in staff calendar</Link>
+              <ActionForm action={rotateCalendarLinkAction} hidden={{ ownerType: "MUSICIAN", ownerId: m.id }} submitLabel="Rotate link" variant="outline" confirm="Issue a new calendar link? The old one stops working immediately." inline />
+            </CardBody>
+          </Card>
 
           <Card>
             <CardHeader title="Coordinates" description="Set manually if geocoding is unavailable." />

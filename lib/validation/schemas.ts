@@ -186,6 +186,10 @@ export const musicianFeedbackSchema = z.object({
 });
 export type MusicianFeedbackInput = z.infer<typeof musicianFeedbackSchema>;
 
+// Portal variants: the signed-in session identifies the author, so the event is named by match id.
+export const portalClientFeedbackSchema = clientFeedbackSchema.omit({ ref: true }).extend({ matchId: z.string().min(10).max(64) });
+export const portalMusicianFeedbackSchema = musicianFeedbackSchema.omit({ ref: true }).extend({ matchId: z.string().min(10).max(64) });
+
 // ───────────── Admin: weights ─────────────
 
 export const weightsSchema = z.object(

@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/db";
+import { prisma, type Tx } from "@/lib/db";
 import { audit, SYSTEM_ACTOR, type Actor } from "@/lib/audit";
 import { raiseAlert } from "@/lib/alerts";
 import { consumeToken, feedbackUrl, issueToken, peekToken } from "@/lib/tokens";
@@ -7,7 +7,7 @@ import { FeedbackRequestEmail, StaffNotifyEmail } from "@/lib/emails/templates";
 import { LOW_RATING_THRESHOLD } from "@/lib/validation/constants";
 import type { ClientFeedbackInput, MusicianFeedbackInput } from "@/lib/validation/schemas";
 import { eventSummary } from "./eventRequests";
-import { loadMatch } from "./bookings";
+import { loadMatch, matchInclude } from "./bookings";
 import { recomputeMusicianStats } from "./musicians";
 
 /** Stage 10: send both feedback forms with the event reference pre-attached (a token). */
@@ -41,25 +41,24 @@ export async function feedbackContext(raw: string, kind: "CLIENT" | "MUSICIAN") 
   return { state, match: token.match };
 }
 
-export async function submitFeedback(kind: "CLIENT" | "MUSICIAN", input: ClientFeedbackInput | MusicianFeedbackInput) {
-  const result = await prisma.$transaction(async (tx) => {
-    const token = await consumeToken(input.ref, "FEEDBACK", tx);
-    if (!token) return null;
-    const expectedRole = kind === "CLIENT" ? "FACILITY" : "MUSICIAN";
-    if (token.recipientRole !== expectedRole) return null;
-    const match = await loadMatch(token.matchId, tx);
-    const followUp = input.followUpRequested || input.rating <= LOW_RATING_THRESHOLD || input.issues.length > 0;
-    const row = await tx.feedback.upsert({
-      where: { matchId_kind: { matchId: match.id, kind } },
-      create: { kind, matchId: match.id, eventRequestId: match.eventRequestId, facilityId: match.facilityId, musicianId: match.musicianId, status: followUp ? "FOLLOW_UP_REQUIRED" : "SUBMITTED", rating: input.rating, secondaryRatings: input.secondaryRatings, comments: input.comments ?? null, issues: input.issues, followUpRequired: followUp, submittedAt: new Date() },
-      update: { status: followUp ? "FOLLOW_UP_REQUIRED" : "SUBMITTED", rating: input.rating, secondaryRatings: input.secondaryRatings, comments: input.comments ?? null, issues: input.issues, followUpRequired: followUp, submittedAt: new Date() },
-    });
-    const actor: Actor = kind === "CLIENT" ? { type: "FACILITY", id: match.facilityId, label: match.facility.name } : { type: "MUSICIAN", id: match.musicianId, label: `${match.musician.firstName} ${match.musician.lastName}` };
-    await audit(actor, { action: "feedback.submitted", entityType: "Feedback", entityId: row.id, eventRequestId: match.eventRequestId, after: { kind, rating: input.rating, issues: input.issues, followUp } }, tx);
-    return { row, match, followUp };
-  });
-  if (!result) return { ok: false as const };
+type FeedbackInput = Omit<ClientFeedbackInput, "ref"> | Omit<MusicianFeedbackInput, "ref">;
+type FullMatch = Awaited<ReturnType<typeof loadMatch>>;
 
+/** Shared write path for both the emailed link and the signed-in portals. */
+async function recordFeedback(kind: "CLIENT" | "MUSICIAN", match: FullMatch, input: FeedbackInput, tx: Tx, via: "link" | "portal") {
+  const followUp = input.followUpRequested || input.rating <= LOW_RATING_THRESHOLD || input.issues.length > 0;
+  const data = { status: followUp ? ("FOLLOW_UP_REQUIRED" as const) : ("SUBMITTED" as const), rating: input.rating, secondaryRatings: input.secondaryRatings, comments: input.comments ?? null, issues: input.issues, followUpRequired: followUp, submittedAt: new Date() };
+  const row = await tx.feedback.upsert({
+    where: { matchId_kind: { matchId: match.id, kind } },
+    create: { kind, matchId: match.id, eventRequestId: match.eventRequestId, facilityId: match.facilityId, musicianId: match.musicianId, ...data },
+    update: data,
+  });
+  const actor: Actor = kind === "CLIENT" ? { type: "FACILITY", id: match.facilityId, label: match.facility.name } : { type: "MUSICIAN", id: match.musicianId, label: `${match.musician.firstName} ${match.musician.lastName}` };
+  await audit(actor, { action: "feedback.submitted", entityType: "Feedback", entityId: row.id, eventRequestId: match.eventRequestId, after: { kind, rating: input.rating, issues: input.issues, followUp, via } }, tx);
+  return { row, match, followUp };
+}
+
+async function afterFeedback(kind: "CLIENT" | "MUSICIAN", input: FeedbackInput, result: Awaited<ReturnType<typeof recordFeedback>>) {
   const { row, match, followUp } = result;
   if (kind === "CLIENT") await recomputeMusicianStats(match.musicianId);
   if (followUp) {
@@ -71,6 +70,41 @@ export async function submitFeedback(kind: "CLIENT" | "MUSICIAN", input: ClientF
     }
   }
   return { ok: true as const, feedbackId: row.id };
+}
+
+/** Feedback arriving through the emailed single-use link. */
+export async function submitFeedback(kind: "CLIENT" | "MUSICIAN", input: ClientFeedbackInput | MusicianFeedbackInput) {
+  const result = await prisma.$transaction(async (tx) => {
+    const token = await consumeToken(input.ref, "FEEDBACK", tx);
+    if (!token) return null;
+    const expectedRole = kind === "CLIENT" ? "FACILITY" : "MUSICIAN";
+    if (token.recipientRole !== expectedRole) return null;
+    const match = await loadMatch(token.matchId, tx);
+    return recordFeedback(kind, match, input, tx, "link");
+  });
+  if (!result) return { ok: false as const, reason: "inactive" as const };
+  return afterFeedback(kind, input, result);
+}
+
+/**
+ * Feedback arriving from a signed-in portal. The owner id comes from the session; the match must
+ * belong to that owner and be over. Any live emailed link is retired so the same event cannot be
+ * rated twice through two doors.
+ */
+export async function submitPortalFeedback(kind: "CLIENT" | "MUSICIAN", ownerId: string, matchId: string, input: FeedbackInput) {
+  const result = await prisma.$transaction(async (tx) => {
+    const match = await tx.match.findUnique({ where: { id: matchId }, include: matchInclude });
+    if (!match) return "not_found" as const;
+    const owns = kind === "CLIENT" ? match.facilityId === ownerId : match.musicianId === ownerId;
+    if (!owns) return "not_found" as const;
+    if (match.status !== "COMPLETED" && match.exceptionStatus !== "NO_SHOW") return "not_completed" as const;
+    const existing = await tx.feedback.findUnique({ where: { matchId_kind: { matchId, kind } } });
+    if (existing?.submittedAt) return "already" as const;
+    await tx.responseToken.updateMany({ where: { matchId, purpose: "FEEDBACK", recipientRole: kind === "CLIENT" ? "FACILITY" : "MUSICIAN", usedAt: null, revokedAt: null }, data: { revokedAt: new Date(), revokedReason: "Submitted from the portal" } });
+    return recordFeedback(kind, match, input, tx, "portal");
+  });
+  if (typeof result === "string") return { ok: false as const, reason: result };
+  return afterFeedback(kind, input, result);
 }
 
 export async function closeFeedback(id: string, notes: string, actor: Actor) {

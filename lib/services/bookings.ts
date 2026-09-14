@@ -9,6 +9,7 @@ import { fmtDateTime, fmtMoney, decimalToNumber } from "@/lib/utils";
 import { eventSummary, closeEventRequest } from "./eventRequests";
 import { runMatchingForRequest } from "./matching";
 import { recomputeMusicianStats } from "./musicians";
+import { calendarUrlFor } from "@/lib/calendar";
 import type { PartyResponse, RecipientRole } from "@/generated/prisma/enums";
 import type { Relaxations } from "@/lib/matching";
 
@@ -198,8 +199,9 @@ async function afterResponse(matchId: string, role: RecipientRole, response: Par
   if (match.status === "CONFIRMED") {
     const tm = await templateText("confirmed.musician", { subject: "Confirmed: your upcoming performance", intro: `Great news, ${match.musician.firstName} — both parties have accepted and the event is confirmed.` });
     const tf = await templateText("confirmed.facility", { subject: "Confirmed: your musician is booked", intro: `Great news — ${musicianName(match.musician)} has accepted and your event is confirmed.` });
-    await dispatch({ to: match.musician.email, templateKey: "confirmed.musician", subject: `${tm.subject} — ${e.when}`, body: ConfirmedEmail({ e, intro: tm.intro, audience: "musician" }), idempotencyKey: `confirmed:${matchId}:MUSICIAN`, matchId, eventRequestId: r.id });
-    await dispatch({ to: match.facility.primaryContactEmail, templateKey: "confirmed.facility", subject: `${tf.subject} — ${e.when}`, body: ConfirmedEmail({ e, intro: tf.intro, audience: "facility" }), idempotencyKey: `confirmed:${matchId}:FACILITY`, matchId, eventRequestId: r.id });
+    const [mCal, fCal] = await Promise.all([calendarUrlFor("MUSICIAN", match.musicianId), calendarUrlFor("FACILITY", match.facilityId)]);
+    await dispatch({ to: match.musician.email, templateKey: "confirmed.musician", subject: `${tm.subject} — ${e.when}`, body: ConfirmedEmail({ e, intro: tm.intro, audience: "musician", calendarUrl: mCal }), idempotencyKey: `confirmed:${matchId}:MUSICIAN`, matchId, eventRequestId: r.id });
+    await dispatch({ to: match.facility.primaryContactEmail, templateKey: "confirmed.facility", subject: `${tf.subject} — ${e.when}`, body: ConfirmedEmail({ e, intro: tf.intro, audience: "facility", calendarUrl: fCal }), idempotencyKey: `confirmed:${matchId}:FACILITY`, matchId, eventRequestId: r.id });
     // Stage 8: reminders and feedback are scheduled (delivered by the jobs runner / Inngest).
     await scheduleFeedbackRows(matchId);
     return;

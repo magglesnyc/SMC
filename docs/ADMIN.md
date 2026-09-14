@@ -11,6 +11,15 @@ The system **recommends, a human approves**. Nothing is ever booked automaticall
 
 Demo logins (after `npm run db:seed`, with `DEMO_MODE=true` the `/demo` hub signs you in with one click): administrator `admin@smc.test` / `demo-admin`, scheduler `scheduler@smc.test` / `demo-scheduler`, staff `staff@smc.test` / `demo-staff`. Musicians and community contacts never sign in; the demo hub shows their inboxes with live links.
 
+## Community and musician portals
+
+Besides the two staff roles, a `User` can have role `FACILITY` (bound to one community via `facilityId`) or `MUSICIAN` (bound to one roster musician via `musicianId`). These users never see the console; the proxy sends them to `/portal/facility` or `/portal/musician`.
+
+- **Community portal** — upcoming performers and their status, offers to confirm / decline / request a change (recorded exactly like a phone response, with the audit actor "… (community portal)"), a rating form for each completed performance, a browsable roster of performers whose travel radius reaches the community (blocked performers are hidden), a preferred-performer toggle (the same `FacilityMusicianPreference` you manage on the facility page), the community calendar with iCal, and a "Request a musician" link that pre-fills the community and, from a profile, the requested performer in the notes.
+- **Musician portal** — offers to accept / decline / request a change, every community they are booked at with address, room, equipment, parking, load-in and on-site contact, their calendar with iCal, a rating form for each completed performance (venue rating), the ratings communities gave them, and a read-only view of the profile communities see. Profile changes still go through staff.
+- **Ratings** are the existing two-way feedback: `Feedback.kind = CLIENT` (community rates performer, feeds `avgRating`) and `MUSICIAN` (performer rates venue). The emailed single-use link and the portal write to the same row; submitting from the portal retires the emailed link so an event cannot be rated twice. Low ratings and flagged issues raise alerts and staff emails as before, and everything lands on the Feedback page.
+- **Creating a portal login** — insert a `User` with a bcrypt hash, role `FACILITY` or `MUSICIAN`, and the matching `facilityId` / `musicianId` (one login per record). The seed creates `director@community.test` and `performer@community.test` for the demo hub.
+
 ## The ten-stage workflow, and where you do it
 
 | # | Stage | Where |
@@ -54,6 +63,11 @@ Availability 25 · Service fit 20 · Distance 15 · Audience/facility fit 15 · 
 | No-show | Recorded against the musician; critical alert | Follow up with the facility; consider a restriction. |
 | Offer unanswered 24h | Staff nudge email; expired links raise an alert | Reissue confirmations or choose another candidate. |
 | Automation failure | Alert with the error | Fix the cause, then re-run (Upcoming events → *Run reminders & feedback jobs now*). |
+
+## Calendars
+
+* **Staff calendar** (Calendar in the sidebar): every offered, confirmed and completed booking; filter to one musician or community; switch the display time zone; click an event to open the request.
+* **Personal calendars**: each musician and each community has one private calendar link, sent in confirmation and reminder emails. It shows their own bookings by day, week, month, year or list in their own time zone and offers an iCal subscription for Google, Apple or Outlook. Tentative (offered, not yet confirmed) bookings appear dashed. Copy the link from the musician or facility page; **Rotate link** if it was forwarded — the old link stops working immediately.
 
 ## Secure links
 

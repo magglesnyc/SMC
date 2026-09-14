@@ -18,7 +18,11 @@ function Stars({ value, onChange, name }: { value: number; onChange: (v: number)
   );
 }
 
-export function FeedbackForm({ kind, refToken }: { kind: "CLIENT" | "MUSICIAN"; refToken: string }) {
+/**
+ * Two doors to the same form: `refToken` (emailed single-use link, posts to the public endpoint) or
+ * `matchId` (signed-in portal, posts to the session-guarded portal endpoint).
+ */
+export function FeedbackForm({ kind, refToken, matchId }: { kind: "CLIENT" | "MUSICIAN"; refToken?: string; matchId?: string }) {
   const [rating, setRating] = useState(0);
   const [secondary, setSecondary] = useState<Record<string, number>>({});
   const [issues, setIssues] = useState<string[]>([]);
@@ -37,15 +41,16 @@ export function FeedbackForm({ kind, refToken }: { kind: "CLIENT" | "MUSICIAN"; 
       return;
     }
     setState({ status: "submitting" });
-    const body = { kind, ref: refToken, rating, secondaryRatings: secondary, comments, issues, followUpRequested: followUp, ...(kind === "CLIENT" ? { wouldBookAgain: again } : { wouldReturn: again }) };
-    const res = await fetch("/api/public/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const target = matchId ? { matchId } : { ref: refToken };
+    const body = { kind, ...target, rating, secondaryRatings: secondary, comments, issues, followUpRequested: followUp, ...(kind === "CLIENT" ? { wouldBookAgain: again } : { wouldReturn: again }) };
+    const res = await fetch(matchId ? `/api/portal/${kind === "CLIENT" ? "facility" : "musician"}/feedback` : "/api/public/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const data = await res.json();
     if (!res.ok) setState({ status: "error", message: data.error ?? "Something went wrong" });
     else setState({ status: "done" });
   }
 
   if (state.status === "done") {
-    return <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-emerald-900"><h2 className="text-lg font-semibold">Thank you.</h2><p className="mt-1 text-sm">Your feedback has been recorded against this event.</p></div>;
+    return <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-emerald-900"><h2 className="text-lg font-semibold">Thank you.</h2><p className="mt-1 text-sm">Your feedback has been recorded against this event.</p>{matchId ? <a href={kind === "CLIENT" ? "/portal/facility" : "/portal/musician"} className="mt-3 inline-block text-sm font-semibold underline">Back to your home page →</a> : null}</div>;
   }
 
   return (

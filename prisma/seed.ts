@@ -476,6 +476,27 @@ async function main() {
     }
   }
 
+  // Portal logins (see /demo). Bound to a busy assisted-living community and a busy musician so the
+  // portals open with real content: upcoming bookings, an offer to answer, and performances to rate.
+  console.log("Creating portal demo logins…");
+  const upcomingLive = { selected: true, exceptionStatus: null, eventRequest: { startAt: { gte: new Date() } } };
+  const portalFacility =
+    (await prisma.facility.findFirst({ where: { facilityType: "assisted-living", matches: { some: { ...upcomingLive, status: { in: ["OFFERED", "PARTIALLY_ACCEPTED"] }, facilityResponse: null } } }, select: { id: true, primaryContactName: true } })) ??
+    (await prisma.facility.findFirst({ where: { facilityType: "assisted-living", matches: { some: { ...upcomingLive, status: "CONFIRMED" } } }, select: { id: true, primaryContactName: true } })) ??
+    (await prisma.facility.findFirstOrThrow({ select: { id: true, primaryContactName: true } }));
+  const portalMusician =
+    (await prisma.musician.findFirst({ where: { status: "ACTIVE", completedEvents: { gt: 0 }, matches: { some: { ...upcomingLive, status: { in: ["OFFERED", "PARTIALLY_ACCEPTED"] }, musicianResponse: null } } }, orderBy: { completedEvents: "desc" }, select: { id: true, firstName: true, lastName: true } })) ??
+    (await prisma.musician.findFirst({ where: { status: "ACTIVE", matches: { some: { ...upcomingLive, status: "CONFIRMED" } } }, orderBy: { completedEvents: "desc" }, select: { id: true, firstName: true, lastName: true } })) ??
+    (await prisma.musician.findFirstOrThrow({ select: { id: true, firstName: true, lastName: true } }));
+  await prisma.user.create({ data: { email: "director@community.test", name: portalFacility.primaryContactName, passwordHash: await hash("demo-community", 10), role: "FACILITY", facilityId: portalFacility.id } });
+  await prisma.user.create({ data: { email: "performer@community.test", name: `${portalMusician.firstName} ${portalMusician.lastName}`, passwordHash: await hash("demo-musician", 10), role: "MUSICIAN", musicianId: portalMusician.id } });
+  // Leave each portal persona one recent performance still to rate (feedback email sent, not yet answered).
+  for (const [kind, where] of [["CLIENT", { facilityId: portalFacility.id }], ["MUSICIAN", { musicianId: portalMusician.id }]] as const) {
+    const latest = await prisma.feedback.findFirst({ where: { ...where, kind, match: { status: "COMPLETED" } }, orderBy: { eventRequest: { startAt: "desc" } } });
+    if (latest) await prisma.feedback.update({ where: { id: latest.id }, data: { status: "SENT", rating: null, secondaryRatings: {}, comments: null, issues: [], followUpRequired: false, submittedAt: null } });
+  }
+  await recomputeMusicianStats(portalMusician.id);
+
   const counts = {
     users: await prisma.user.count(),
     musicians: await prisma.musician.count(),

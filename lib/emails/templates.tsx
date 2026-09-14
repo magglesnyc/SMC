@@ -78,24 +78,40 @@ export function FacilityOfferEmail({ e, intro, url, expires }: { e: EventSummary
 
 // ───────────── Confirmation & reminders ─────────────
 
-export function ConfirmedEmail({ e, intro, audience }: { e: EventSummary; intro: string; audience: "musician" | "facility" }) {
+export function ConfirmedEmail({ e, intro, audience, calendarUrl }: { e: EventSummary; intro: string; audience: "musician" | "facility"; calendarUrl?: string }) {
   return (
     <BrandedEmail preview={`Confirmed: ${e.when}`} title="Your event is confirmed">
       <Text style={p}>{intro}</Text>
       <EventDetails e={e} showRate={audience === "musician"} />
       <Text style={p}>We will send a reminder before the event. If anything changes, reply to this email as soon as possible.</Text>
+      {calendarUrl ? <CalendarBlock url={calendarUrl} audience={audience} /> : null}
     </BrandedEmail>
   );
 }
 
-export function ReminderEmail({ e, intro, audience, loadIn }: { e: EventSummary; intro: string; audience: "musician" | "facility"; loadIn?: string | null }) {
+export function ReminderEmail({ e, intro, audience, loadIn, calendarUrl }: { e: EventSummary; intro: string; audience: "musician" | "facility"; loadIn?: string | null; calendarUrl?: string }) {
   return (
     <BrandedEmail preview={`Reminder: ${e.when}`} title="Upcoming event reminder">
       <Text style={p}>{intro}</Text>
       <EventDetails e={e} />
       {audience === "musician" && loadIn ? <Text style={p}><strong>Load-in / access:</strong> {loadIn}</Text> : null}
       <Text style={p}>If you can no longer make it, reply to this email immediately so we can arrange a replacement.</Text>
+      {calendarUrl ? <CalendarBlock url={calendarUrl} audience={audience} /> : null}
     </BrandedEmail>
+  );
+}
+
+function CalendarBlock({ url, audience }: { url: string; audience: "musician" | "facility" }) {
+  return (
+    <Section style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid #e8c7cf" }}>
+      <Text style={p}>
+        <strong>Your calendar.</strong> {audience === "musician" ? "All of your Senior Music Connection performances" : "All performers scheduled at your community"}, by day, week, month or year. Add it to Google, Apple or Outlook from the page.
+      </Text>
+      <Button href={url} style={{ ...button, backgroundColor: "#c9a24d", color: "#2a1f1d" }}>
+        Open my calendar
+      </Button>
+      <Text style={muted}>This is your private calendar link. Please do not forward it.</Text>
+    </Section>
   );
 }
 

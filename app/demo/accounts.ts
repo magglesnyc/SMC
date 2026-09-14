@@ -31,3 +31,31 @@ export const DEMO_ACCOUNTS = [
     tour: ["Feedback → close a follow-up", "Audit log → see both staff names on the same event"],
   },
 ] as const;
+
+/**
+ * Portal personas. The seed binds each to the busiest seeded community / musician, so the name
+ * shown on the demo hub comes from the database rather than from here.
+ */
+export const DEMO_PORTAL_ACCOUNTS = [
+  {
+    key: "facility",
+    role: "Community (assisted living)",
+    email: "director@community.test",
+    password: "demo-community",
+    landing: "/portal/facility",
+    blurb: "The activity director's own page. Sees who is booked and when, confirms proposed performers, rates each performance, browses and requests performers who travel to the community, and keeps a preferred list.",
+    tour: ["Home → confirm a proposed performer, rate a recent performance", "Find performers → filter by genre, open a profile, mark preferred", "Calendar → month view and iCal subscription", "Request a musician → the form with the community pre-filled"],
+  },
+  {
+    key: "musician",
+    role: "Musician",
+    email: "performer@community.test",
+    password: "demo-musician",
+    landing: "/portal/musician",
+    blurb: "A roster musician's own page. Accepts or declines offers, sees every community they are booked at with addresses and load-in notes, rates venues after each performance, and reads the ratings communities gave them.",
+    tour: ["Home → accept an offer, rate a venue", "Calendar → every location, in their own time zone", "Where you play → addresses, parking, load-in, on-site contact", "Ratings → what communities said, and the ratings they gave"],
+  },
+] as const;
+
+export type DemoKey = (typeof DEMO_ACCOUNTS)[number]["key"] | (typeof DEMO_PORTAL_ACCOUNTS)[number]["key"];
+export const ALL_DEMO_ACCOUNTS = [...DEMO_ACCOUNTS, ...DEMO_PORTAL_ACCOUNTS] as const;
