@@ -7,6 +7,9 @@ import { eventSummary } from "./eventRequests";
 import { loadMatch, markCompleted } from "./bookings";
 import { sendFeedbackRequests } from "./feedback";
 import { calendarUrlFor } from "@/lib/calendar";
+import { syncEnabled, pruneEchoes } from "@/lib/monday/webhook";
+import { pushDirty } from "@/lib/monday/push";
+import { pullFromMonday } from "@/lib/monday/pull";
 
 /**
  * Date/status-driven automation (FR-12). Idempotent: every send has a stable idempotency
@@ -19,8 +22,12 @@ export interface JobReport {
   feedbackSent: number;
   offerNudges: number;
   expiredOffers: number;
+  mondayPushed: number;
+  mondayPulled: boolean;
   errors: string[];
 }
+
+const MONDAY_RECONCILE_MS = 60 * 60_000;
 
 const REMINDER_OFFSETS_HOURS = [72, 24];
 
@@ -31,7 +38,7 @@ const REMINDER_OFFSETS_HOURS = [72, 24];
 const APP_OWNED = { source: "APP" } as const;
 
 export async function runDueJobs(now = new Date()): Promise<JobReport> {
-  const report: JobReport = { ranAt: now.toISOString(), reminders: 0, completed: 0, feedbackSent: 0, offerNudges: 0, expiredOffers: 0, errors: [] };
+  const report: JobReport = { ranAt: now.toISOString(), reminders: 0, completed: 0, feedbackSent: 0, offerNudges: 0, expiredOffers: 0, mondayPushed: 0, mondayPulled: false, errors: [] };
   const safe = async (label: string, fn: () => Promise<void>, refs: { matchId?: string; eventRequestId?: string } = {}) => {
     try {
       await fn();
@@ -110,6 +117,27 @@ export async function runDueJobs(now = new Date()): Promise<JobReport> {
   const failed = await prisma.notificationLog.findMany({ where: { status: "FAILED", createdAt: { gt: new Date(now.getTime() - 24 * 3_600_000) } }, take: 20 });
   if (failed.length) {
     await raiseAlert({ type: "AUTOMATION_FAILURE", severity: "WARNING", title: `${failed.length} email send(s) failed in the last 24h`, message: failed.map((f) => `${f.templateKey} → ${f.recipient}: ${f.error ?? "unknown"}`).join("\n") });
+  }
+
+  // 6. Monday.com: push app changes every run; reconcile with a full incremental pull once an hour, which also
+  //    catches anything a missed webhook left out. A rejected token surfaces here as an automation failure.
+  if (syncEnabled()) {
+    await safe("Monday push", async () => {
+      const r = await pushDirty();
+      report.mondayPushed = r.musicians.written + r.musicians.created + r.facilities.written + r.facilities.created + r.events.written + r.events.created;
+      const errs = [...r.musicians.errors, ...r.facilities.errors, ...r.events.errors];
+      if (errs.length) throw new Error(errs.slice(0, 5).join("\n"));
+    });
+    const last = await prisma.mondaySyncCursor.findFirst({ orderBy: { lastPulledAt: "desc" }, select: { lastPulledAt: true } });
+    if (!last?.lastPulledAt || now.getTime() - last.lastPulledAt.getTime() > MONDAY_RECONCILE_MS) {
+      await safe("Monday reconcile pull", async () => {
+        const r = await pullFromMonday();
+        report.mondayPulled = true;
+        const errs = Object.values(r.boards).flatMap((b) => b?.errors ?? []);
+        if (errs.length) throw new Error(errs.slice(0, 5).join("\n"));
+      });
+    }
+    await pruneEchoes().catch(() => {});
   }
 
   return report;

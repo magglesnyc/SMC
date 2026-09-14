@@ -8,21 +8,23 @@
  */
 import { fromZonedTime } from "date-fns-tz";
 import { prisma, type Tx } from "@/lib/db";
-import { audit, SYSTEM_ACTOR, type Actor } from "@/lib/audit";
+import { audit } from "@/lib/audit";
+import { MONDAY_ACTOR } from "./actor";
+import { markInSync } from "./push";
 import { getGeoProvider, formatAddress } from "@/lib/geo";
 import { DEFAULT_TZ } from "@/lib/utils";
 import { findFacilityDuplicates, findMusicianDuplicates } from "@/lib/services/duplicates";
 import { nextEventReference } from "@/lib/services/references";
 import { recomputeMusicianStats } from "@/lib/services/musicians";
 import { APPLICATION, BOARDS, CLIENT, ENTERTAINER, ENTERTAINER_FEEDBACK, FACILITY_FEEDBACK, GIG, REQUEST, type BoardKey } from "./boards";
-import { colDate, colFiles, colLinkedIds, colList, colNumber, colText, fetchBoardItems, type MondayItem } from "./client";
+import { colDate, colFiles, colLinkedIds, colList, colNumber, colText, fetchBoardItems, fetchItems, type MondayItem } from "./client";
 import {
   extractGenres, firstEmail, mapApplicationStatus, mapAudienceTag, mapClientStatus, mapEntertainerStatus, mapFacilityType, mapParticipation,
   mapPreferredContact, mapServiceType, normalisePhoneText, normaliseState, parseAttendance, parseMoney, parseTimeRange, parseTravelMiles,
   splitInstruments, splitLabels, splitName,
 } from "./parse";
 
-export const MONDAY_ACTOR: Actor = { type: "SYSTEM", label: "monday-sync" };
+export { MONDAY_ACTOR };
 
 export interface BoardReport {
   seen: number;
@@ -77,6 +79,16 @@ export async function pullFromMonday(opts: PullOptions = {}): Promise<PullReport
     log(`  seen ${br.seen} · created ${br.created} · updated ${br.updated} · linked ${br.linked} · skipped ${br.skipped} · errors ${br.errors.length}`);
   }
   return report;
+}
+
+/** Import specific items (webhook path). Always re-reads them, ignoring the updated_at watermark. */
+export async function pullItems(key: BoardKey, items: MondayItem[], opts: Pick<PullOptions, "dryRun" | "log"> = {}): Promise<BoardReport> {
+  const br: BoardReport = { seen: items.length, created: 0, updated: 0, linked: 0, skipped: 0, errors: [] };
+  const handler = HANDLERS[key];
+  if (!handler) return br;
+  const ctx: Ctx = { dryRun: Boolean(opts.dryRun), incremental: false, log: opts.log ?? (() => {}), report: { ranAt: new Date().toISOString(), dryRun: Boolean(opts.dryRun), boards: { [key]: br } } };
+  await handler(ctx, items, br);
+  return br;
 }
 
 // ───────────────────────── Shared plumbing ─────────────────────────
@@ -258,6 +270,8 @@ async function upsertMusician(ctx: Ctx, boardId: string, item: MondayItem, data:
       musicianId = c.id;
     }
   });
+  // What we just pulled is, by definition, what Monday has: seed the push hash so it is not pushed straight back.
+  if (boardId === BOARDS.entertainers && musicianId) await markInSync("Musician", musicianId, item.id);
   void br;
   return outcome;
 }
@@ -276,16 +290,16 @@ async function pullApplications(ctx: Ctx, items: MondayItem[], br: BoardReport) 
     // An approved applicant who is already on the Partner Entertainer List is the same musician: link, don't downgrade.
     const link = await findLink(BOARDS.applications, item.id, "Musician");
     if (!link && data.email) {
-      const onList = await prisma.musician.findFirst({ where: { email: { equals: data.email, mode: "insensitive" } } });
-      if (onList) {
-        if (!ctx.dryRun) await upsertLink(prisma, BOARDS.applications, item, "Musician", onList.id);
+      const existing = await prisma.musician.findFirst({ where: { email: { equals: data.email, mode: "insensitive" } } });
+      if (existing) {
+        if (!ctx.dryRun) await upsertLink(prisma, BOARDS.applications, item, "Musician", existing.id);
         return "linked";
       }
     }
+    // Once someone is on the Partner Entertainer List, that board owns their record; the application is history.
     if (link) {
-      const m = await prisma.musician.findUnique({ where: { id: link.entityId }, select: { status: true } });
-      // Once they are on the partner list, the list's status wins over the application's.
-      if (m && ["ACTIVE", "INACTIVE", "SUSPENDED"].includes(m.status)) return "skipped";
+      const onList = await prisma.mondayLink.findFirst({ where: { boardId: BOARDS.entertainers, entityType: "Musician", entityId: link.entityId } });
+      if (onList) return "skipped";
     }
     return upsertMusician(ctx, BOARDS.applications, item, data, status, br, label === "Denied" ? `Application denied in Monday (${colDate(item, APPLICATION.date) ?? ""})` : undefined);
   });
@@ -349,6 +363,7 @@ async function pullClients(ctx: Ctx, items: MondayItem[], br: BoardReport) {
         await upsertLink(tx, BOARDS.clients, item, "Facility", c.id);
       }
     });
+    await markInSync("Facility", (await findLink(BOARDS.clients, item.id, "Facility"))!.entityId, item.id);
     return outcome;
   });
 }
@@ -437,7 +452,8 @@ function pickLabel(label: string): string | null {
 async function pullGigs(ctx: Ctx, gigs: MondayItem[], br: BoardReport) {
   // Every gig reads its source booking request for the fields the tracker only mirrors.
   const requests = new Map<string, MondayItem>();
-  for (const r of await fetchBoardItems(BOARDS.bookingRequests)) requests.set(r.id, r);
+  const requestIds = Array.from(new Set(gigs.map((g) => colLinkedIds(g, GIG.sourceRequest)[0]).filter((id): id is string => Boolean(id))));
+  for (let i = 0; i < requestIds.length; i += 100) for (const r of await fetchItems(requestIds.slice(i, i + 100))) requests.set(r.id, r);
 
   await forEachItem(ctx, BOARDS.gigs, gigs, br, async (gig) => {
     const link = await findLink(BOARDS.gigs, gig.id, "EventRequest");
@@ -544,6 +560,7 @@ async function pullGigs(ctx: Ctx, gigs: MondayItem[], br: BoardReport) {
       else if (musicianId && !facilityId) await logSync(tx, BOARDS.gigs, gig, "skipped", { type: "EventRequest", id: ev.id }, { reason: "entertainer known but facility not linked; no booking row created" });
     });
     if (musicianId && lifecycle === "COMPLETED") await recomputeMusicianStats(musicianId);
+    await markInSync("EventRequest", (await findLink(BOARDS.gigs, gig.id, "EventRequest"))!.entityId, gig.id);
     return outcome;
   });
 }
@@ -717,4 +734,3 @@ async function pullFeedback(ctx: Ctx, items: MondayItem[], br: BoardReport, kind
 }
 
 export const _internal = { gigData, lifecycleOf, entertainerData };
-void SYSTEM_ACTOR;

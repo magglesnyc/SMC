@@ -18,6 +18,7 @@ const nav = [
   { href: "/admin/reports", label: "Reports" },
   { href: "/admin/notifications", label: "Email log" },
   { href: "/admin/audit", label: "Audit log" },
+  { href: "/admin/monday", label: "Monday sync", adminOnly: true },
   { href: "/admin/settings", label: "Settings", adminOnly: true },
 ];
 

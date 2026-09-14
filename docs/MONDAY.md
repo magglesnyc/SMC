@@ -1,16 +1,25 @@
 # Monday.com sync
 
 Senior Music Connection runs its bookings on Monday.com today. Until staff are confident enough to switch, the app
-mirrors the Monday boards so both stay in step: Monday → app is live (this document), app → Monday and webhooks are
-the next step. Turning the sync off is one variable: blank `MONDAY_API_TOKEN`.
+mirrors the Monday boards so both stay in step, in both directions. Turning the sync off is one variable: blank
+`MONDAY_API_TOKEN` (or set `MONDAY_SYNC_ENABLED=false` to pause the automatic parts and keep the manual scripts).
 
 ## Setup
 
 | Variable | Purpose |
 |---|---|
 | `MONDAY_API_TOKEN` | Personal API token of the Monday user the sync runs as. Blank disables the sync. |
+| `MONDAY_SYNC_ENABLED` | `"true"` turns on the scheduled push/reconcile and the webhook receiver. Leave off while an environment runs on seed data. |
+| `MONDAY_WEBHOOK_SECRET` | Shared secret carried in the webhook URL (`?key=…`); Monday's plain webhooks have no signature. |
 | `MONDAY_BOARD_<KEY>` | Optional board-id overrides so a duplicated test board can be used instead of the live one. |
 | `MONDAY_LEGACY_WORKSPACE_ID` | Optional: export every board in the retired workspace, not just the known ids. |
+
+Going live on an environment:
+
+1. Set the four variables above (generate the secret with `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`), with `MONDAY_SYNC_ENABLED=true`.
+2. `npm run monday:pull` once to link every existing Monday item to an app record.
+3. `npm run monday:webhooks -- --url=https://<app>/api/monday/webhook` to register webhooks on the seven synced boards.
+4. Watch `/admin/monday` (admin only): per-board state, last pull/push, recent activity, and manual Pull / Push buttons.
 
 **The token belongs to a person.** Monday API tokens and any webhooks created with them stop working the moment that
 user is deactivated, and Monday does not report it: the sync would simply go quiet. Before removing whoever set the
@@ -26,7 +35,45 @@ npm run monday:pull                              # incremental pull (items uncha
 npm run monday:pull -- --full                    # re-read every item regardless of the watermark
 npm run monday:pull -- --boards=entertainers,clients
 npm run monday:export-legacy                     # full JSON + CSV export of the retired workspace → exports/
+npm run monday:push -- --dry-run                 # what the app would write back to Monday
+npm run monday:push                              # write changed records to their linked Monday items
+npm run monday:push -- --create                  # also create Monday items for app-only records (see below)
+npm run monday:webhooks -- --list | --url=… | --remove
 ```
+
+## How the two directions fit together
+
+- **Webhooks** (Monday → app, seconds): Monday POSTs to `/api/monday/webhook` on item create / column change /
+  rename / group move / archive / delete. The handler re-reads the item and runs the same importer the pull uses.
+  Archive and delete never touch the app record; they raise an alert for a person to decide.
+- **Scheduled push** (app → Monday, every 10 min with the other jobs): every record whose `updatedAt` moved since its
+  last push is rebuilt into a Monday payload; only a payload whose hash changed is written. A pull stamps that hash
+  too (`markInSync`), so freshly pulled records are never pushed straight back.
+- **Hourly reconcile**: a full incremental pull, which also repairs anything a missed webhook left behind. A rejected
+  token shows up as an automation failure in the Exceptions queue.
+- **Most recent edit wins**: before writing, the push compares Monday's `updated_at` with the app record's
+  `updatedAt`; if Monday moved later, the write is skipped and the next pull brings Monday's value in.
+- **Echo suppression**: every column the push writes is recorded in `MondayEcho`; the webhook Monday fires for that
+  write is matched on (item, column) inside a 10-minute window and dropped. Keyed on the value, never the user, so
+  the sync can run under any Monday account.
+
+### Creating items in Monday
+
+Updates to already-linked items are automatic. Creating *new* Monday items for app-only records is opt-in
+(`--create` / the checkbox on `/admin/monday`) so demo or test data can never leak onto the live boards. When
+allowed: approved/active musicians → Partner Entertainer List; active facilities → Client List; app-originated
+events past intake → a Gig Tracker row (never a Booking Request Form row, so Monday's own form automations don't
+fire twice). Requests submitted through Monday's form keep their Monday-created gig row.
+
+### What the push writes
+
+| App record | Monday columns |
+|---|---|
+| Musician | Entertainer Status, phone, email, address, group name/size, emergency contact, preferred contact, themes |
+| Facility | Active Status, contact name/phone/email, address, facility phone |
+| Event + selected Match | Confirm Date, Client List and Partner Entertainer List relations, entertainer/facility emails, Facility Budget, Entertainer Fee, Special Instructions, Cancel Event? / Who Cancelled / Reason, and the item's **group** (To Be Booked / Booked / Completed / Cancellations) |
+
+Agreements, billing and payment columns are never written by the app.
 
 ## What maps to what
 
@@ -92,12 +139,6 @@ Parsers live in `lib/monday/parse.ts` with tests in `tests/monday.parse.test.ts`
 `EventRequest.source = "MONDAY"` marks every mirrored event. `runDueJobs` skips those for reminders, offer nudges and
 feedback sends (staff send agreements, reminders and feedback forms from Monday by hand). The app still marks them
 completed after the event so musician stats and history stay right.
-
-## Loop prevention (for the push side)
-
-Every value the app writes to Monday is recorded in `MondayEcho` (item id, column id, hash of the value). When the
-webhook for that change arrives it is recognised as our own echo and dropped. This is keyed on the value, not on the
-Monday user who made the change, so the sync works whether it runs as a staff member's token or a dedicated user.
 
 ## Retired workspace
 

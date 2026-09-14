@@ -654,6 +654,7 @@ model MondayLink {
   mondayUpdatedAt DateTime? // item.updated_at as of the last pull; unchanged ⇒ pull is a no-op
   pulledAt        DateTime?
   pushedAt        DateTime?
+  pushedHash      String? // hash of the last payload written to Monday; unchanged ⇒ push is a no-op
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 

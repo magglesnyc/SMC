@@ -351,6 +351,28 @@ export async function saveTemplateAction(_p: ActionResult, fd: FormData) {
   return res;
 }
 
+// ───────────── Monday.com sync ─────────────
+
+export async function mondayPullAction(_p: ActionResult, _fd: FormData) {
+  return guard(async () => {
+    const { pullFromMonday } = await import("@/lib/monday/pull");
+    const r = await pullFromMonday();
+    refresh("/admin/monday");
+    const totals = Object.values(r.boards).reduce((a, b) => ({ created: a.created + (b?.created ?? 0), updated: a.updated + (b?.updated ?? 0), errors: a.errors + (b?.errors.length ?? 0) }), { created: 0, updated: 0, errors: 0 });
+    return `Pulled from Monday: ${totals.created} created, ${totals.updated} updated, ${totals.errors} errors`;
+  }, true);
+}
+
+export async function mondayPushAction(_p: ActionResult, fd: FormData) {
+  return guard(async () => {
+    const { pushDirty } = await import("@/lib/monday/push");
+    const r = await pushDirty({ allowCreate: fd.get("create") === "on" });
+    refresh("/admin/monday");
+    const n = (c: { written: number; created: number }) => c.written + c.created;
+    return `Pushed to Monday: ${n(r.musicians)} musicians, ${n(r.facilities)} facilities, ${n(r.events)} events`;
+  }, true);
+}
+
 export async function runJobsAction(_p: ActionResult, _fd: FormData) {
   const res = await guard(async () => {
     const r = await runDueJobs();
