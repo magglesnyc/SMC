@@ -73,7 +73,9 @@ function findMusician(text: string): MusicianRow | null {
     const hit = musicians.find((m) => m.email.toLowerCase() === email);
     if (hit) return hit;
   }
-  const name = text.split(/\s+-\s+/)[0].trim();
+  let name = text.split(/\s+-\s+/)[0].trim();
+  // Only an address? Its local part usually spells the name: "VictorThomas@krissy.com", "stephen.ramos.1962@gmail.com".
+  if (name.includes("@")) name = name.split("@")[0].replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[._\d]+/g, " ").trim();
   if (!name) return null;
   let best: { m: MusicianRow; s: number } | null = null;
   for (const m of musicians) {
@@ -82,6 +84,9 @@ function findMusician(text: string): MusicianRow | null {
   }
   if (best && best.s >= 0.85) return best.m;
   if (/^[A-Z]{2,5}$/.test(name)) return onlyOne(musicians.filter((m) => [m.stageName ?? "", `${m.firstName} ${m.lastName}`].some((n) => acronym(n) === name.toLowerCase())));
+  // "Bobby Tee" inside "Robert Tarasiak (Bobby Tee)", "Bridge Band" inside "The Bridge Band": all words present in exactly one act.
+  const ws = words(name);
+  if (ws.length && ws.join("").length >= 5) return onlyOne(musicians.filter((m) => [m.stageName ?? "", `${m.firstName} ${m.lastName}`].some((n) => { const nw = words(n); return ws.every((w) => nw.includes(w)); })));
   return null;
 }
 
@@ -203,6 +208,38 @@ async function importGigs(file: ExportFile) {
   for (const id of touched) await recomputeMusicianStats(id);
 }
 
+/**
+ * `--relink`: imported gigs that had no matching entertainer at import time get another chance, e.g. after a
+ * missing performer was added to the Partner Entertainer List and pulled in.
+ */
+async function relinkEntertainers(file: ExportFile) {
+  let relinked = 0;
+  const touched = new Set<string>();
+  for (const it of file.items) {
+    const text = col(it, "email_1");
+    if (!text) continue;
+    const link = await prisma.mondayLink.findFirst({ where: { boardId: file.board.id, itemId: it.id, entityType: "EventRequest" } });
+    if (!link) continue;
+    const ev = await prisma.eventRequest.findUnique({ where: { id: link.entityId }, select: { id: true, facilityId: true, startAt: true, durationMinutes: true, matches: { where: { selected: true }, select: { id: true } } } });
+    if (!ev || ev.matches.length || !ev.facilityId) continue;
+    const musician = findMusician(text);
+    if (!musician) continue;
+    if (!DRY) {
+      const past = ev.startAt < new Date();
+      await prisma.$transaction(async (tx) => {
+        const run = await tx.matchRun.create({ data: { eventRequestId: ev.id, weightsSnapshot: { source: "LEGACY" }, thresholdsSnapshot: {}, totalMusicians: 1, eligibleCount: 1, exclusionSummary: {}, durationMs: 0 } });
+        await tx.match.create({ data: { matchRunId: run.id, eventRequestId: ev.id, facilityId: ev.facilityId!, musicianId: musician.id, eligible: true, rank: 1, selected: true, isOverride: true, overrideReason: "Booked in the retired Monday Gig Tracker", status: past ? "COMPLETED" : "CONFIRMED", musicianResponse: "ACCEPTED", facilityResponse: "ACCEPTED", confirmedAt: new Date(it.created_at), completedAt: past ? new Date(ev.startAt.getTime() + ev.durationMinutes * 60_000) : null } });
+        await audit(MONDAY_ACTOR, { action: "monday.legacy_relinked", entityType: "EventRequest", entityId: ev.id, eventRequestId: ev.id, after: { itemId: it.id, musicianId: musician.id } }, tx);
+      });
+      touched.add(musician.id);
+    }
+    relinked++;
+    report.gigs.noMusician = report.gigs.noMusician.filter((line) => !line.includes(text));
+  }
+  for (const id of touched) await recomputeMusicianStats(id);
+  console.log(`relinked ${relinked} gig(s) to entertainers added since the import`);
+}
+
 // ───────────────────────── Applications / agreements → notes ─────────────────────────
 
 async function appendNote(kind: "Musician" | "EventRequest", id: string, marker: string, note: string) {
@@ -301,6 +338,7 @@ async function main() {
 
   const gigs = loadBoard(dir, LEGACY_BOARDS.gigs);
   if (gigs) await importGigs(gigs);
+  if (gigs && flag("relink")) await relinkEntertainers(gigs);
   const apps = loadBoard(dir, LEGACY_BOARDS.applications);
   if (apps) await importApplications(apps);
   const clientAgr = loadBoard(dir, LEGACY_BOARDS.clientAgreements);

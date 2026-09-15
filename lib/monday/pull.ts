@@ -218,8 +218,10 @@ async function upsertMusician(ctx: Ctx, boardId: string, item: MondayItem, data:
   let musicianId = link?.entityId ?? null;
   let outcome: "created" | "updated" | "linked" = "updated";
   if (!musicianId) {
-    // The same person may already exist (seeded, entered in the app, or on the other Monday board).
-    const dupes = fields.email || fields.phone ? await findMusicianDuplicates({ firstName: fields.firstName, lastName: fields.lastName, email: fields.email || "none@invalid", phone: fields.phone }) : [];
+    // The same person may already exist (seeded, entered in the app, or on the other Monday board). Staff sometimes
+    // put their own address on an act that has none, so an SMC address never counts as identifying.
+    const identifyingEmail = fields.email && !isPlaceholderEmail(fields.email) ? fields.email : "none@invalid";
+    const dupes = identifyingEmail !== "none@invalid" || fields.phone ? await findMusicianDuplicates({ firstName: fields.firstName, lastName: fields.lastName, email: identifyingEmail, phone: fields.phone }) : [];
     const hit = dupes.find((d) => d.confidence >= 0.6);
     if (hit) {
       musicianId = hit.id;
@@ -440,6 +442,12 @@ function gigData(gig: MondayItem, request: MondayItem | null) {
         }
       : null,
   };
+}
+
+const PLACEHOLDER_EMAIL_DOMAINS = ["seniormusicconnection.com", "krissy.com", "ccc.com"];
+function isPlaceholderEmail(email: string) {
+  const d = email.toLowerCase().split("@")[1] ?? "";
+  return PLACEHOLDER_EMAIL_DOMAINS.includes(d);
 }
 
 /** Placeholder labels ("Select Status", "Signed Contract?") mean "not set". */
